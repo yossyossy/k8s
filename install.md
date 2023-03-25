@@ -45,6 +45,125 @@ nc 127.0.0.1 6443
 swapon -s
 ```
 
-# ランタイムのインストール
+# コンテナランタイムのインストール
+## 前提
+### IPv4フォワーディングを有効化し、iptablesからブリッジされたトラフィックを見えるようにする
+```
+# 事前確認
+lsmod | grep br_netfilter
+lsmod | grep overlay
+sysctl net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 
+# 設定
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+sudo modprobe overlay
+sudo modprobe br_netfilter
+
+# この構成に必要なカーネルパラメーター、再起動しても値は永続します
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
+EOF
+
+# 再起動せずにカーネルパラメーターを適用
+sudo sysctl --system
+
+# 事後確認
+# br_netfilterとoverlayモジュールが読み込まれていることを確認する
+lsmod | grep br_netfilter
+lsmod | grep overlay
+
+# カーネルパラメーターが1に設定されていることを確認する
+# net.bridge.bridge-nf-call-iptables、
+# net.bridge.bridge-nf-call-ip6tables、
+# net.ipv4.ip_forward
+sysctl net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
+```
+
+# containerdインストール
+## 準備
+### aptリポジトリをセットアップする
+#### パッケージ インデックスを更新しapt、パッケージをインストールして、aptHTTPS 経由でリポジトリを使用できるようにします。
+```
+sudo apt-get update
+sudo apt-get install \
+    ca-certificates \
+    curl \
+    gnupg
+```
+
+#### Docker の公式 GPG キーを追加します。
+```
+sudo mkdir -m 0755 -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+```
+
+#### 次のコマンドを使用して、リポジトリをセットアップします。
+```
+echo \
+  "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+```
+
+#### パッケージ インデックスを更新しますapt。
+```
+sudo apt-get update
+```
+
+#### containerdをインストールします
+```
+sudo apt-get install containerd.io
+```
+
+#### containerdサービスの起動を確認する
+```
+systemctl status containerd
+```
+
+# cgroupドライバー
+## 準備
+```
+cgroupドライバーはデフォルトでcgroupfsとなっている。
+initシステムがsystemdの場合、systemd cgroupドライバーに変更する必要があるる。
+また、コンテナランタイムがsystemd cgroupドライバーを使用する場合、
+kubeletもsystemd cgroupドライバーを使用する必要がある。一致させなければならない。
+```
+
+#### initシステム確認
+```
+ps -p 1
+```
+
+#### systemd cgroupドライバーを構成する
+```
+# ファイル内を空にする
+sudo cp -p  /etc/containerd/config.toml  /etc/containerd/config.toml.bak
+sudo cp -p  /dev/null  /etc/containerd/config.toml
+cat  /etc/containerd/config.toml
+```
+
+以下を追記する
+```
+cat <<EOF | sudo tee /etc/containerd/config.toml
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+    SystemdCgroup = true
+EOF
+```
+確認する
+```
+cat  /etc/containerd/config.toml
+```
+containerdサービスを再起動する
+```
+systemctl status containerd
+sudo systemctl restart containerd
+systemctl status containerd
+```
 
