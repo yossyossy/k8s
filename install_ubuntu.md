@@ -191,3 +191,108 @@ sudo apt-get update
 sudo apt-get install -y kubelet kubeadm kubectl
 sudo apt-mark hold kubelet kubeadm kubectl
 ```
+
+# コントロールプレーンノードの初期化(マスターノードのみ)
+IPアドレスを確認する
+```
+ip addr show
+```
+
+コントロールプレーンノードを初期化する
+コマンドの実行結果に作業継続に必要なコマンドが表示されるので、消さないように注意する
+```
+sudo kubeadm init --pod-network-cidr=10.244.0.0/16  --apiserver-advertise-address=<IPアドレス>
+```
+
+例：コマンドの実行結果
+```
+Your Kubernetes control-plane has initialized successfully!
+
+To start using your cluster, you need to run the following as a regular user:
+
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+Alternatively, if you are the root user, you can run:
+
+  export KUBECONFIG=/etc/kubernetes/admin.conf
+
+You should now deploy a pod network to the cluster.
+Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
+  https://kubernetes.io/docs/concepts/cluster-administration/addons/
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 192.168.56.2:6443 --token pfa6r3.g6hi6n90gu61vl5p \
+        --discovery-token-ca-cert-hash sha256:a48f08297c34026cfff713c200a32dcc959d9555fe9ed26f426a17e943e1ad4e
+```
+
+クラスターを開始する
+```
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+kubectlコマンドが実行できることを確認する
+```
+kubectl get pod -A
+```
+
+
+# ネットワークアドオンのインストール(マスターノードのみ)
+## Weave Netのインストール
+```
+kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
+```
+
+weave netのpodが作成されていることを確認する
+```
+kubectl get pod -A
+```
+
+デーモンセット：Weave Netの設定を変更する
+spec.template.spec.containers.env下に以下を入力する
+```
+      containers:
+        - name: weave
+          env:
+            - name: IPALLOC_RANGE
+              value: 10.244.0.0/16
+```
+```
+kubectl get ds weave-net -n kube-system
+kubectl edit ds weave-net -n kube-system
+kubectl get ds weave-net -n kube-system
+```
+
+AGE欄を参照し、weave netポッドがデプロイされたことを確認する
+```
+kubectl get pod -A
+```
+
+マスターノードでクラスターの状態を確認する
+```
+kubectl get nodes
+```
+
+ワーカーノードをクラスターに追加する
+```
+sudo kubeadm join 192.168.56.2:6443 --token pfa6r3.g6hi6n90gu61vl5p \
+        --discovery-token-ca-cert-hash sha256:a48f08297c34026cfff713c200a32dcc959d9555fe9ed26f426a17e943e1ad4e
+```
+
+マスターノードでクラスターの状態を確認する
+```
+kubectl get nodes
+```
+
+ポッドをデプロイできることを確認する
+```
+kubectl get pod
+kubectl run nginx --image=nginx
+kubectl get pod
+kubectl delete pod nginx
+kubectl get pod
+```
